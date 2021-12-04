@@ -1,4 +1,4 @@
-Here's a little dimensionality reduction project I did under the supervision of Dr. Matthew Conroy at the University of Washington.
+Here's a little dimensionality reduction project I did under the supervision of [Dr. Matthew Conroy](https://sites.math.washington.edu/~conroy/) at the University of Washington.
 
 Some conclusions:
 * Mediterranean countries know what they like. The ingredients in their kitchens are not very diverse.
