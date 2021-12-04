@@ -1,0 +1,721 @@
+---
+title: "A numerical analysis of cuisines across Europe"
+author: "Rishabh Verma"
+header-includes:
+  - \usepackage{listings}
+  - \usepackage{hyperref}
+date: "12/3/2021"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rgl)  # for 3d plotting
+library(GGally)  # for ggpairs
+library(ggpubr)  # for ggarrange
+```
+
+\section{1\quad Introduction}
+
+I got my hands on a dataset describing the contents of the kitchens in 20 different European countries, published in 1975. It includes pantry items like soup tins, olive oil, and tea bags; frozen items like fish and vegetables; and refrigerated items like yogurt and butter.
+
+The credit for this dataset goes to John Hartigan's database for clustering algorithms, and a proper citation is included at the end of this paper.
+
+Some countries might be similar, and some countries might be not.
+
+I can ask questions about this dataset based on which countries are similar. For example, which countries drink coffee, and which countries drink tea? Which countries keep lots of frozen items stocked? Which countries have access to fresh fruit?
+
+This paper explores the feasibility of answering questions like these using dimensionality reduction and identifying clusters.
+
+The dimensionality reduction algorithm I will use is called multi-dimensional scaling (MDS).
+
+\subsection{1.1\quad Data Description}
+
+```{r, include=FALSE}
+data <- read.csv("data.csv", sep=",") %>% 
+  tibble() %>%
+  relocate(Name)
+
+country_codes <- names(data %>% select(-Name, -Code))
+country_names <- c("West Germany","Italy","France","Netherlands","Belgium","Luxemburg","Great Britain","Portugal","Austria","Switzerland","Sweden","Denmark","Norway","Finland","Spain","Ireland")
+regions <- c("Unclassified","Mediterranean","Unclassified","English","Unclassified","Unclassified","English","Mediterranean","Unclassified","Unclassified","Scandinavian","Scandinavian","Scandinavian","Scandinavian","Mediterranean","English") %>% as.factor()
+entries <- data %>% 
+  select(-Name, -Code) %>%
+  t %>%
+  as_tibble
+names(entries) = data$Name
+
+tidy_data <- entries %>%
+  bind_cols(code=country_codes) %>%
+  relocate(code) %>%
+  mutate(regions=regions)
+```
+
+This dataset describes the prevalence of 20 foodstuffs among 16 European countries. 
+
+The attributes include the name of the food, a two digit character code for the food, and 16 measurements of the prevalence of that food in a country's households.
+
+
+All measurements of prevalence are percentage values between 0 and 100.
+
+\subsection{1.2\quad Data cleaning}
+
+This dataset is not "tidy." A single row corresponds to a food item, but we are interested in the pantry of each individual country. By transposing this dataset, each country and its measurements will occupy a row.
+
+
+The cross-section below shows the first 5 food rows and first 10 country attributes in the original dataset.
+
+```{r}
+head(data, 5)
+```
+
+
+The cross-section below shows the first 5 country rows and first 4 food attributes in the tidied, i.e. transposed, dataset.
+```{r}
+head(tidy_data, 5)
+```
+
+Additionally, here is a map of country name to 2-digit country code.
+
+\begin{table}[!h]
+\centering
+\begin{tabular}{rl}
+WG & West Germany  \\
+IT & Italy         \\
+FR & France        \\
+NS & Netherlands   \\
+BM & Belgium       \\
+LG & Luxemburg     \\
+GB & Great Britain \\
+PL & Portugal      \\
+AA & Austria       \\
+SD & Switzerland   \\
+SW & Sweden        \\
+DK & Denmark       \\
+NY & Norway        \\
+FD & Finland       \\
+SP & Spain         \\
+ID & Ireland      
+\end{tabular}
+\end{table}
+\section{2\quad Methods}
+
+Since there are 20 measurements of foodstuffs made, each country's kitchen can be represented as a vector in $\mathbb{R}^{20}$.
+
+Multi-dimensional scaling (MDS) is a flexible method of dimensionality reduction that may be useful for this dataset. To understand MDS, suppose you have a set of data-points $A \subset \mathbb{R}^n$. For each distinct pair of data-points $i,j \in A$ such that $i \neq j$, you can compute a real-valued distance between them. This distance could be computed using the norm of the vector space, i.e. $|i-j|$, but it doesn't have to be. It can be any distance function that makes sense to the user.
+
+Given the resulting matrix of pairwise distances and a dimensionality parameter $k \in \mathbb{Z}^+$, the MDS problem is to approximate a set of coordinates in $\mathbb{R}^k$ whose pairwise Euclidean distances match the inputted pairwise distances.
+
+The \texttt{stats} package in R provides a routine \texttt{cmdscale} which implements an algorithm for this problem.
+
+Since all data values are percentages from 0 to 100, they are all "on the same scale." They do not need to be normalized for a meaningful computation of distance.
+
+\section{3\quad Building a model}
+
+\subsection{3.1\quad Multi-Dimensional Scaling}
+
+Let's start simple. What happens if you compute the Euclidean distance between each point and pass that into MDS? 
+
+The \texttt{cmdscale} routine will compute the eigenvalues of the distance matrix, which I can analyze to decide how many dimensions I want to include in my model.
+
+```{r, fig.show="hold", out.width="50%", fig.height=2.4, fig.width=3.2}
+# Compute a matrix of Euclidean distances
+distances <- dist(entries,
+                 method="minkowski", p=2) %>%
+  as.matrix()
+
+# Perform MDS
+model.1 <- cmdscale(distances, k=1, eig=TRUE)
+model.2 <- cmdscale(distances, k=2, eig=TRUE)
+model.3 <- cmdscale(distances, k=3, eig=TRUE)
+```
+
+In addition to plotting the eigenvalues, I can examine how passing a higher dimensionality argument results in a higher goodness-of-fit.
+
+The output of \texttt{cmdscale} includes two values for goodness-of-fit. One value is computed using the absolute values of the eigenvalues of the distance matrix, and the other is computed using only the positive eigenvalues. The distance matrix has positive eigenvalues, so these values always agree.
+
+
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", fig.height=2.4, fig.width=3.2}
+# Plot the eigenvalues
+data.frame(index=1:15, eig=model.1$eig[1:15]) %>% 
+  ggplot() + 
+  geom_point(aes(x=index, y=eig)) +
+  labs(title="Eigenvalues of Euclidean\ndistance matrix", x="index", y="eigenvalue")
+
+# build GOF for 15 models
+GOF <- rep(NA, 15)
+for (k in seq(15)) {
+  GOF[k] <- cmdscale(distances, k=k, eig=TRUE)$GOF[1]
+}
+
+data.frame(index=1:15, GOF=GOF) %>%
+  ggplot(aes(x=index, y=GOF)) +
+  geom_point() +
+  labs(title="Goodness-of-fit with\nEuclidean distance matrix",
+       x="no. of dimensions")
+```
+
+The eigenvalues have a rather gradual decay, until they drop off sharply after the seventh eigenvalue. This suggests that we would only see diminishing returns after adding seven dimensions to the model, so this model may not perform well.
+
+This is supported by the goodness-of-fit increasing with respect to number of dimensions at a similar sluggish pace. We want a model with a sharper change.
+
+\subsection{3.2 \quad Building a competing model}
+
+What if I try transforming the data so that countries with the same extreme values are regarded as more similar? For example, a country with 80\% prevalence of instant coffee will be regarded as closer to a country with 90\% prevalence of instant coffee.
+
+I can do this using a logistic function centered at $x=50$ with a height of $100$.
+
+\[
+f(x; k)=\dfrac{100}{1+e^{-k(x-50)}}
+\]
+
+The value $k$ controls the shape of this logistic curve. $k=0.09$ yields the following function.
+
+```{r, echo=FALSE, fig.align='center', fig.height=2.2, fig.width=3.3}
+myFun = function(x, k=0.09) {100/(1+exp(-k*(x-50)))}
+
+data.frame(x=seq(1,100,0.01), y=sapply(seq(1,100,0.01), myFun)) %>%
+  ggplot() +
+  geom_line(aes(x=x, y=y)) +
+  geom_abline(slope=1, intercept=0, color="red", linetype="dashed") +
+  labs(x="x",
+       y="f(x;k)",
+       title="A logistic transformation function",
+       subtitle="k=0.09")
+```
+
+This function pulls the data apart toward the ends. 
+
+A tightly-clustered attribute at an extreme end will become even more tightly clustered, and contribute less variation to the distance calculation.
+
+A spread-out attribute toward the center will become much more spread out, and will contribute more variation to the distance calculation.
+
+A spread-out attribute that is firmly to one side will not be as significantly altered as one that is closer to the center. 
+
+Now let's try applying this function and re-analyzing the data.
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", fig.height=2.4, fig.width=3.2}
+# Compute a matrix of Euclidean distances
+distances.t <- dist(apply(entries,
+                        MARGIN=c(1,2),
+                        myFun),
+                  method="minkowski", p=2) %>%
+  as.matrix()
+
+# Perform MDS
+model.1.t <- cmdscale(distances.t, k=1, eig=TRUE)
+model.2.t <- cmdscale(distances.t, k=2, eig=TRUE)
+model.3.t <- cmdscale(distances.t, k=3, eig=TRUE)
+model.4.t <- cmdscale(distances.t, k=4, eig=TRUE)
+
+# Plot the eigenvalues
+data.frame(index=1:15, eig=model.1.t$eig[1:15]) %>% 
+  ggplot() + 
+  geom_point(aes(x=index, y=eig)) +
+  labs(title="Eigenvalues of Euclidean\ndistance matrix\nafter logistic transform", x="index", y="eigenvalue")
+
+# build GOF for 15 models
+GOF <- rep(NA, 15)
+for (k in seq(15)) {
+  GOF[k] <- cmdscale(distances, k=k, eig=TRUE)$GOF[1]
+}
+
+data.frame(index=1:15, GOF=GOF) %>%
+  ggplot(aes(x=index, y=GOF)) +
+  geom_point() +
+  labs(title="Goodness-of-fit with\nEuclidean distance matrix\nafter logistic transform",
+       x="no. of dimensions")
+```
+
+
+
+
+
+This eigenvalue plot presents two eigenvalues that are much more significant than the rest. This plot is still less than ideal since the eigenvalues still roll off gradually. A low-dimensional model will not capture all of the information in the data, but it's the best we can do.
+
+Transformation brings the GOF of the 2-dimensional model from `r round(model.2$GOF[1], 3)` to `r round(model.2.t$GOF[1], 3)`. This is not a significant change.
+
+All in all, it seems that the logistic transformation will make for a better 2-D model based off of the eigenvalues.
+
+
+\subsection{3.3\quad The spaces from four different models}
+
+The one-dimensional spaces created by both models are:
+
+
+```{r, echo=FALSE, fig.show="hold", out.width="50%", fig.height=2.6, fig.width=3.8}
+model.1 %>%
+  .$points %>%
+  as_tibble() %>%
+  mutate(country_name = country_names,
+         region=regions) %>%
+  ggplot(aes(x=0, y=V1, label=country_name, color=region)) +
+  geom_text() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none") +
+  labs(y="x-axis",
+       x=NULL,
+       title="1-D modeled space, no transform")
+
+model.1.t %>%
+  .$points %>%
+  as_tibble() %>%
+  mutate(country_name = country_names,
+         region=regions) %>%
+  ggplot(aes(x=0, y=V1, label=country_name, color=region)) +
+  geom_text() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none") +
+  labs(y="x-axis",
+       x=NULL,
+       title="1-D modeled space, transformed")
+```
+
+The two-dimensional spaces created by both models are:
+```{r, echo=FALSE, fig.show="hold", out.width="50%", fig.height=2.8, fig.width=3.8}
+
+result.2 <- model.2 %>%
+  .$points %>%
+  as_tibble() %>%
+  mutate(country_code = country_codes,
+         region=regions)
+
+result.2.t <- model.2.t %>%
+  .$points %>%
+  as_tibble() %>%
+  mutate(country_code = country_codes,
+         region=regions)
+
+result.2 %>%
+  ggplot(aes(x=V1, y=V2, label=country_code, color=region)) +
+  #geom_point() +
+  #geom_text(hjust=-0.25, vjust=0.1) +
+  geom_text() +
+  coord_fixed() +
+  labs(title="2-D, no transform",
+       x="x-axis",
+       y="y-axis") +
+  theme(legend.position="none")
+
+
+result.2.t %>%
+  ggplot(aes(x=V1, y=V2, label=country_code, color=region)) +
+  #geom_point() +
+  #geom_text(hjust=-0.25, vjust=0.1) +
+  geom_text() +
+  coord_fixed(ratio=1) +
+  labs(title="2-D, transformed",
+       x="x-axis",
+       y="y-axis") +
+  theme(legend.position="none")
+```
+
+Comparing the entries of the 2-D models and the 1-D models reveals that adding a second dimension does not change the modeled coordinates in the first dimension. This means the x-axis of the 2-D graphs are the exact same as the vertical x-axis in the 1-D graphs.
+
+I am not an expert in European cultures, but I can at least pull out three cultural groups using prior knowledge. The English-adjacent countries are classified together since their local languages are West Germanic cousins: Scots, English, Frisian, and Dutch.
+
+\begin{itemize}
+\item Scandinavian countries (blue): Norway, Finland, Sweden, Denmark
+\item Mediterranean countries (green): Spain, Portugal, Italy
+\item English-adjacent countries (red): Great Britain, Ireland, the Netherlands
+\end{itemize}
+
+I have left the rest unclassified (purple) because again, I do not know enough to make any finer classifications. 
+
+
+In the 1-D model, you can pick out the English countries and the Mediterranean countries. The Scandinavian countries are not distinct.
+
+The 2-D space captures a lot more nuance. Adding a second dimension pulls Scandinavia apart from the other European countries. 
+
+The logistic transform does not have a dramatic effect on the spaces formed, but since its eigenvalue plot looks better, I will proceed using the models formed after using the logistic transform.
+
+
+\section{4\quad Analyzing the model}
+
+\subsection{4.1\quad 2 dimensions vs 3 dimensions}
+
+The distance matrix of the model's fitted points is supposed to approximate the inputted distance matrix.
+
+Let $D$ be the original distance matrix. Let $D_2$ be the modeled distance matrix using $k=2$ dimensions.
+
+
+```{r, include=FALSE}
+D <- distances.t
+D2 <- dist(model.2.t$points) %>% as.matrix()
+D3 <- dist(model.3.t$points) %>% as.matrix()
+D4 <- dist(model.4.t$points) %>% as.matrix()
+E <- D2 - D
+E_significant <- E*(abs(E)>90)
+
+E3 <- D3 - D
+E3_significant <- E3*(abs(E3)>75)
+
+E4 <- D4 - D
+```
+
+
+
+The left histogram below compares the distribution of the non-zero distances in $D$ and in $D_2$. It shows that the modeled coordinate system yields a distance matrix $D_2$ that underapproximates the entries of $D$ by quite a lot.
+
+
+
+```{r, echo=FALSE, warning=FALSE, fig.align="center", fig.height=2.5, fig.width=4.5, fig.show="hold", out.width="45%"}
+all.distances <- data.frame(distance = c(D[upper.tri(D)],
+                                         D2[upper.tri(D2)],
+                                         D3[upper.tri(D3)]),
+                            source=rep(c("original", "2-D model", "3-D model"), c(120,120,120)))
+
+all.distances %>%
+  filter(source != "3-D model") %>%
+  ggplot(aes(x=distance, fill=source, colour=source)) +
+  geom_histogram(position="identity", alpha=0.5, bins=30) +
+  scale_x_continuous(limits=c(0,250)) +
+  ggtitle("Comparison of distance distributions\n(2-D vs original)")
+
+par(oma=c(0,0,0,0))
+
+hist(E, main="Distribution of entries in E2", xlab="error", breaks=15, xlim=c(-150,0))
+```
+
+The right histogram above examines the distribution of the entries in the error matrix, $E_2=D_2-D$. It shows that all of the errors are in fact non-positive. This is why the red histogram is to the left of the blue one. It then follows that the modeled distances are all too short; the points are too close together. 
+
+Thus, the entries in $E_2$ with the greatest absolute value represent points that are far away in $\mathbb{R}^{20}$, but the dimensionality reduction from MDS squishes them together.
+
+The distribution of the errors in the right figure shows that there is one outlier*, and a few more large values. Analysis of the error values more significant than $-90$ reveals two things:
+
+\begin{enumerate}
+\item Ireland should be further from West Germany, Netherlands*, Belgium, Luxemburg, and Denmark.
+\item Sweden should be further away from Denmark, Norway, and Finland.
+\end{enumerate}
+
+What if we add a third dimension? Let's dive into $E_3 = D_3 - D$.
+
+On the left, you can see the modeled distance histogram $D_3$ shifts a little closer to the original distance histogram $D$.
+
+On the right, you can see the distribution of errors in $E_3$ shifts closer to zero.
+
+```{r, echo=FALSE, warning=FALSE, fig.align="center", fig.height=2.5, fig.width=4.5, fig.show="hold", out.width="45%"}
+data.frame(distance = c(D[upper.tri(D)],
+                 D2[upper.tri(D2)],
+                 D3[upper.tri(D3)]),
+           source=rep(c("original", "2-D model", "3-D model"), c(120,120,120))) %>%
+  filter(source != "2-D model") %>%
+  ggplot(aes(x=distance, fill=source, colour=source)) +
+  geom_histogram(position="identity", alpha=0.5, bins=30) +
+  scale_x_continuous(limits=c(0,250)) +
+  ggtitle("Comparison of distance distributions\n(3-D vs original)")
+
+par(oma=c(0,0,0,0))
+
+
+hist(E3, main="Distribution of entries in E3", xlab="error", breaks=15, xlim=c(-150,0))
+```
+
+
+\newpage
+
+For dimensions $k=2,3$, the previous section operated by computing $E_k=D_k-D$ and analyzing the entries of $E_k$ with a histogram.
+
+I can also create scatterplots directly comparing the entries of $D_k$ and $D$. In these scatterplots, the vertical distance from any point and the red line represents the corresponding error value in $E_k$.
+
+
+```{r echo=FALSE, fig.height=3}
+distance.cols <- data.frame(original=D[upper.tri(D)],
+                            twoD=D2[upper.tri(D2)],
+                            threeD=D3[upper.tri(D3)],
+                            fourD=D4[upper.tri(D4)]) %>%
+  mutate(e2 = twoD - original,
+         e3 = threeD - original,
+         e4 = fourD - original) %>%
+  mutate(squished = e2 < -100,
+         squished3 = e3 < -75)
+
+#plot(D[upper.tri(D)], D2[upper.tri(D2)])
+
+scatter.1 <- distance.cols %>%
+  ggplot(aes(x=original, y=twoD, color=squished)) +
+  geom_point(alpha=0.7) +
+  geom_abline(slope=1, intercept=0, color="red") +
+  scale_x_continuous(limits=c(0,260)) +
+  scale_y_continuous(limits=c(0,260)) +
+  scale_color_manual(breaks=c(TRUE,FALSE), values=c("#2B8CBE", "#333333")) +
+  theme(legend.position="none") +
+  coord_fixed(ratio=1) +
+  labs(x="original distance",
+       y="modeled distance",
+       title="Comparison of distances\n(2-D model)")
+
+scatter.2 <- distance.cols %>%
+  ggplot(aes(x=original, y=threeD, color=squished)) +
+  geom_point(alpha=0.7) +
+  geom_abline(slope=1, intercept=0, color="red") +
+  scale_x_continuous(limits=c(0,260)) +
+  scale_y_continuous(limits=c(0,260)) +
+  scale_color_manual(breaks=c(TRUE,FALSE), values=c("#2B8CBE", "#333333")) +
+  theme(legend.position="none") +
+  coord_fixed(ratio=1) +
+  labs(x="original distance",
+       y="modeled distance",
+       title="Comparison of distances\n(3-D model)")
+
+ggarrange(scatter.1, scatter.2)
+```
+
+I colored a dozen of the points with the highest errors in $E_2$ blue. They're all sitting together in the left scatterplot. Speaking roughly, these points all have an original distance around $[150,190]$ and a 2-D modeled distance of only $[10,90]$, but adding the third dimension pushes this group way up in the right scatterplot to $[50,150]$, which is considerably better. 
+
+Again, these points represent a small set of pairwise distance relations that really need a third dimension to be captured, mostly regarding Ireland or Sweden.
+
+\newpage
+
+\subsection{4.2\quad What about more dimensions?}
+
+How does this improve with more dimensions? For $k=1,2,...,15$, let's compute and plot the variance of the entries of $E_k = D_k - D$.
+
+Recall that since we are modeling 16 points in $\mathbb{R}^{20}$, using a number of dimensions anywhere close to 15 is not very meaningful.
+
+```{r echo=FALSE, fig.height=3.5}
+vars = rep(NA, 15)
+maxdiff = rep(NA, 15)
+for (k in 1:15) {
+  current.model = cmdscale(distances.t, k=k, eig=TRUE)
+  Dk = dist(current.model$points) %>% as.matrix()
+  current.E.entries = Dk[upper.tri(Dk)] - D[upper.tri(Dk)]
+  vars[k] = var(current.E.entries)
+  maxdiff[k] = max(abs(current.E.entries))
+}
+par(mfrow=c(1,2))
+plot(1:15, vars, xlab="no. of dimensions", ylab="variance of entries of E_k",
+     main="Variance of E_k")
+plot(1:15, maxdiff, xlab="no. of dimensions", ylab="max error of entries of E_k",
+     main="Maximum error in E_k")
+```
+
+There's a bit of a staircase pattern. This plot suggests that going from 2-D to 3-D is very useful, but going from 3-D to 4-D does not seem to affect the error matrix much.
+
+Now I'm just too curious. What if I replicate the scatterplots, but comparing 3-D and 4-D? The 3-D scatterplot is already pretty good, so how much improvement could the 4-D scatterplot yield? This time I've colored in the dozen points with the highest errors in $E_3$ to see where they go.
+
+```{r echo=FALSE, fig.height=3}
+scatter.1 <- distance.cols %>%
+  ggplot(aes(x=original, y=threeD, color=squished3)) +
+  geom_point(alpha=0.7) +
+  geom_abline(slope=1, intercept=0, color="red") +
+  scale_x_continuous(limits=c(0,260)) +
+  scale_y_continuous(limits=c(0,260)) +
+  scale_color_manual(breaks=c(TRUE,FALSE), values=c("#2B8CBE", "#333333")) +
+  theme(legend.position="none") +
+  coord_fixed(ratio=1) +
+  labs(x="original distance",
+       y="modeled distance",
+       title="Comparison of distances\n(3-D model)")
+
+scatter.2 <- distance.cols %>%
+  ggplot(aes(x=original, y=fourD, color=squished3)) +
+  geom_point(alpha=0.7) +
+  geom_abline(slope=1, intercept=0, color="red") +
+  scale_x_continuous(limits=c(0,260)) +
+  scale_y_continuous(limits=c(0,260)) +
+  scale_color_manual(breaks=c(TRUE,FALSE), values=c("#2B8CBE", "#333333")) +
+  theme(legend.position="none") +
+  coord_fixed(ratio=1) +
+  labs(x="original distance",
+       y="modeled distance",
+       title="Comparison of distances\n(4-D model)")
+
+ggarrange(scatter.1, scatter.2)
+```
+
+Yeah, not very much improvement with 4 dimensions.
+
+\section{5\quad Using the model to analyze the data}
+
+\subsection{5.1\quad Investigating the outliers}
+
+\subsubsection{5.1.1\quad Ireland and the Netherlands}
+
+In section 4.1, I used the histograms of $E_2,E_3$ and the scatterplots of $D_2$ against $D$, $D_3$ against $D$ to identify some outliers in the 2-D model that were better represented in the 3-D model.
+
+Let's dive into those outliers and see what we can learn.
+
+The most significant outlier in $E_2$ is due to Ireland and the Netherlands. Just how different can they be? Apparently they differ by 50 percentage points on three different foodstuffs.
+
+```{r}
+data %>%
+  select(Name, ID, NS) %>%
+  mutate(diff = ID - NS) %>%
+  filter(abs(diff) > 50)
+```
+Ireland uses butter whereas the Netherlands use margarine. The Netherlands also keep a lot more ground coffee and yogurt.
+
+\subsubsection{5.1.2 Sweden and Scandinavia}
+
+Why should Sweden be further away from the rest of Scandinavia? Let's dive into the entries and see where Sweden differs from the average of its peers by 30 percentage points.
+
+```{r}
+data %>% 
+  select(Name, SW, DK, NY, FD) %>%
+  mutate(average = (DK+NY+FD)/3) %>%
+  filter(abs(SW-average) > 30) %>%
+  select(-average)
+```
+
+It is reported that 0% of Swedish households have packaged biscuits, but roughly 64% of their Scandinavian peers do. The total absence of packaged biscuits in Sweden is \textbf{suspicious}. There may be missing information.
+
+I should also note that Sweden also seems to consume a lot more tinned soup, less margarine, and more crispbread than its peers. 
+
+
+
+
+\newpage
+
+\subsection{5.2\quad Finding trends}
+
+Let's look at just the 2-D logistic-transformed model. What do the two coordinates mean?
+
+I can investigate this by iterating through each attribute, computing its correlation with the two coordinate systems, and plotting the results on a scatterplot.
+
+```{r, echo=FALSE, fig.width=4, fig.height=4, fig.align="center"}
+tidy_data <- tidy_data %>% 
+  mutate(X1 = model.2.t$points[,1],
+         X2 = model.2.t$points[,2],) %>%
+  relocate(X1, X2)
+
+correlations = matrix(nrow=20, ncol=2)
+
+i = 1
+for (col in entries) {
+  correlations[i,1] = cor(col, model.2.t$points[,1])
+  correlations[i,2] = cor(col, model.2.t$points[,2])
+  i = i + 1
+}
+
+correlation_results = data.frame(rho_1 = correlations[,1], 
+                                 rho_2 = correlations[,2],
+                                 item = data$Name)
+
+view_correlations <- correlation_results %>%
+  ggplot(aes(x=rho_1, y=rho_2, label=item)) +
+  geom_hline(yintercept=0) +
+  geom_vline(xintercept=0) +
+  geom_text(hjust=0, vjust=0) +
+  coord_fixed() +
+  scale_x_continuous(limits=c(-1,1)) +
+  scale_y_continuous(limits=c(-1,1))
+view_correlations
+```
+
+\newpage
+
+\subsubsection{5.2.1\quad The first coordinate axis}
+
+The first coordinate is negatively correlated with the use of olive oil and garlic, and is positively correlated with all other foods. Why is that?
+
+Out of 20 foods, 18 are positively correlated with $x_1$. Perhaps $x_1$ just measures the diversity of foods within a pantry in a single country. Suppose I were to iterate through each country and sum up the elements of the corresponding vector in $\mathbb{R}^{20}$. A high sum means that in that country, lots of households have lots of different types of foods. A low sum might mean that most households have a less diverse set of foods stocked.
+
+But what about the olive oil and garlic?
+
+```{r echo=FALSE, fig.width=3, fig.height=2.5, fig.align="center", fig.show="hold", out.width="40%"}
+totaled <- tidy_data %>%
+  mutate(total = `ground coffee` + `instant coffee` + `tea bags` + `sugarless sweets`
+         + `packaged biscuits` + `packaged soup` + `tinned soup` + `instant potatoes`
+         + `frozen fish` + `frozen vegetables` + `fresh apples` + `fresh oranges`
+         + `tinned fruit` + `shop jam` + `garlic clove` + butter + margarine +
+           `olive oil` + yogurt + crispbread) %>%
+  select(total, X1, X2, code)
+
+totaled %>%
+  ggplot(aes(x=X1, y=total, label=code, color=regions)) +
+  geom_text() +
+  ggtitle("Total Food Score ~ X1") +
+  theme(legend.position="none")
+
+tidy_data %>% 
+  ggplot(aes(x=X1, y=`garlic clove`, label=code, color=regions)) + 
+  geom_text() +
+  ggtitle("Prevalence of garlic ~ X1") +
+  theme(legend.position="none")
+
+
+tidy_data %>% 
+  ggplot(aes(x=X1, y=`olive oil`, label=code, color=regions)) + 
+  geom_text() +
+  ggtitle("Prevalence of olive oil ~ X1") +
+  theme(legend.position="none")
+```
+
+Countries with a low total food score include the Mediterranean countries, Finland, Ireland, and Austria.
+
+Countries with a high prevalence of garlic cloves include the Mediterranean countries, France, and Luxembourg.
+
+Countries with a high prevalence of olive oil include the Mediterranean countries, Luxembourg, and Belgium.
+
+Notice a pattern? I think $x_1$ simultaneously measures Mediterranean-ness and diversity of foodstuffs. These two patterns are \textit{confounded} with each other, and the model does its best to represent them both with $x_1$.
+
+\newpage
+
+\subsubsection{5.2.2\quad The second coordinate axis}
+
+The second coordinate is positively correlated with crispbread and frozen foods, and is negatively correlated with instant coffee and packaged soup.
+
+According to Wikipedia, crispbread originates from Scandinavia. Come on, \textit{come on}, let's put our thinking caps on.
+
+```{r echo=FALSE, fig.width=3.2, fig.height=2.5, fig.align="center", fig.show="hold", out.width="45%"}
+tidy_data %>% 
+  ggplot(aes(x=X2, y=`crispbread`, label=code, color=regions)) + 
+  geom_text() +
+  ggtitle("Prevalence of crispbread ~ X2") +
+  theme(legend.position="none",
+        plot.title = element_text(size=12))
+
+tidy_data %>% 
+  ggplot(aes(x=X2, y=`frozen fish`, label=code, color=regions)) + 
+  geom_text() +
+  ggtitle("Prevalence of frozen fish ~ X2") +
+  theme(legend.position="none",
+        plot.title = element_text(size=12))
+
+tidy_data %>% 
+  ggplot(aes(x=X2, y=`instant coffee`, label=code, color=regions)) + 
+  geom_text() +
+  ggtitle("Prevalence of instant coffee ~ X2") +
+  theme(legend.position="none",
+        plot.title = element_text(size=12))
+
+tidy_data %>% 
+  ggplot(aes(x=X2, y=`packaged soup`, label=code, color=regions)) + 
+  geom_text() +
+  ggtitle("Prevalence of packaged soup ~ X2") +
+  theme(legend.position="none",
+        plot.title = element_text(size=12))
+```
+
+Dare I say the second axis measures Scandinavian-ness? This is consistent with the fact that in the physical spaces modeled by MDS, Scandinavia needed the second dimension to be distinct from the central Europe.
+
+This attests to the cultural distinctness of Scandinavia from the rest of Europe.
+
+\newpage
+
+\section{6\quad References}
+
+Data credit:
+
+\begin{lstlisting}
+John Hartigan,
+Clustering Algorithms,
+Wiley, 1975.
+ISBN 0-471-35645-X
+LC: QA278.H36
+Dewey: 519.5'3
+\end{lstlisting}
+
+Data retrieved from \href{https://people.sc.fsu.edu/~jburkardt/datasets/hartigan/hartigan.html}{https://people.sc.fsu.edu/~jburkardt/datasets/hartigan/hartigan.html}
+
+\section{7\quad Code}
+
+This document was generated from an RMarkdown notebook.
+
+The markdown code and R chunks used to generate this document can be found at \href{https://github.com/vermarish/european-cuisine}{https://github.com/vermarish/european-cuisine}.
